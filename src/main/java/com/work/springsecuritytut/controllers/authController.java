@@ -7,19 +7,17 @@ import com.work.springsecuritytut.entity.Role;
 import com.work.springsecuritytut.entity.UserEntity;
 import com.work.springsecuritytut.repozytory.RoleRepozytory;
 import com.work.springsecuritytut.repozytory.UserRepozytory;
-import jakarta.persistence.GeneratedValue;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.Collections;
 import java.util.List;
@@ -44,8 +42,14 @@ public class authController {
         this.jwtGenerator = jwtGenerator;
     }
 
+    @GetMapping("/h")
+    String hh(@RequestHeader("Authorization") String token){
+        System.out.println(token);
+        return "d";
+    }
     @GetMapping("/hi")
-    String hello(){
+    String hello(@RequestHeader("Authorization") String token){
+        System.out.println(token);
         return "hello";
     }
 
@@ -60,14 +64,15 @@ public class authController {
 
         user.setUsername(registerDto.getUsername());
         user.setPassword(passwordEncoder.encode(registerDto.getPassword()));
+        user.setEmail(registerDto.getEmail());
 
-        Optional<Role> role = roleRepozytory.findByName("USER");
+        Optional<Role> role = roleRepozytory.findByName("USER_ROLE");
         if (role.isPresent()) {
             user.setRoles(Collections.singletonList(role.get()));
         } else {
             return new ResponseEntity<>("Role not found", HttpStatus.NOT_FOUND);
         }
-        Role roles = roleRepozytory.findByName("USER").get();
+        Role roles = roleRepozytory.findByName("USER_ROLE").get();
         user.setRoles(Collections.singletonList(roles));
 
         userRepozytory.save(user);
@@ -76,26 +81,27 @@ public class authController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginDto loginDto) {
-        UsernamePasswordAuthenticationToken token = new UsernamePasswordAuthenticationToken(
-                loginDto.getUsername(),
-                loginDto.getPassword()
-        );
+    public ResponseEntity<String> login(@RequestBody LoginDto loginDto) {
+        try {
+            // Proces autentykacji
+            Authentication authentication = authenticationManager.authenticate(new
+                    UsernamePasswordAuthenticationToken(loginDto.getEmail(), loginDto.getPassword()));
+            SecurityContextHolder.getContext().setAuthentication(authentication);
 
-        Authentication authenticationResult = authenticationManager.authenticate(token);
+            // Pobierz pełne informacje o użytkowniku
+            UserEntity user = userRepozytory.findByEmail(loginDto.getEmail())
+                    .orElseThrow(() -> new UsernameNotFoundException("User Not Found with username: " + loginDto.getEmail()));
 
-        // Pobranie nazwy użytkownika
-        String username = authenticationResult.getName();
+            // Generowanie tokenu
+            List<String> roles = user.getRoles().stream().map(Role::getName).collect(Collectors.toList());
+            String token = jwtGenerator.generateToknen(user.getEmail(), roles);
 
-        // Pobranie uprawnień użytkownika przez mapowanie do listy stringów
-        List<String> roles = authenticationResult.getAuthorities().stream()
-                .map(GrantedAuthority::getAuthority)
-                .collect(Collectors.toList());
+            // Zwróć token jako odpowiedź
+            return ResponseEntity.ok().body(token);
 
-        // Generowanie tokenu JWT
-        String jwt = jwtGenerator.generateToknen(username, roles);
+        } catch (BadCredentialsException e) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
 
-        // Zwracam token jako odpowiedź HTTP
-        return ResponseEntity.ok(jwt);
     }
 }

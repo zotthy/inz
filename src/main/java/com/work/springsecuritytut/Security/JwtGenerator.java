@@ -15,6 +15,7 @@ import com.nimbusds.jwt.SignedJWT;
 import java.text.ParseException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 
@@ -26,7 +27,7 @@ public class JwtGenerator {
     //zastosowwany algorytm
     private final JWSAlgorithm jwsAlgorithm = JWSAlgorithm.HS256;
     //klucz prywatny
-    private final String JWT_SECRET = "ThisIsAStrongKeyForJwtEncryptionYouCanCreateAnyStrongKeyHereButMustBeMoreThan256BitsLength";
+    private final String JWT_SECRET = "ThisIsAStrongKeyForJwtEncryptionYouCanCreateAnyStrongKeyHereButMustBeMoreThan256BitsLength\"";
 
     private final JWSSigner signer;
     private final JWSVerifier verifier;
@@ -80,20 +81,48 @@ public class JwtGenerator {
             throw new RuntimeException("Fail signature");
         }
     }
-    Authentication createAuthentication(SignedJWT signedJWT) {
+
+    void verifyExpirationTime(SignedJWT signedJWT) {
+        try {
+            JWTClaimsSet jwtClaimsSet = signedJWT.getJWTClaimsSet();
+            LocalDateTime expirationDateTime = jwtClaimsSet
+                    .getDateClaim("exp")
+                    .toInstant()
+                    .atZone(ZoneId.systemDefault())
+                    .toLocalDateTime();
+            if (LocalDateTime.now().isAfter(expirationDateTime)) {
+                throw new JwtAuthenticationException("Token Expired at %s".formatted(expirationDateTime));
+            }
+        } catch (ParseException e) {
+            throw new JwtAuthenticationException("Token does not have exp claim");
+        }
+    }
+
+
+    public Authentication createAuthentication(SignedJWT signedJWT) {
         String subject;
         List<String> authorities;
         try {
             JWTClaimsSet jwtClaimsSet = signedJWT.getJWTClaimsSet();
             subject = jwtClaimsSet.getSubject();
-            authorities = jwtClaimsSet.getStringListClaim("authorities");
+            if (jwtClaimsSet.getClaim("authorities") != null) {
+                authorities = jwtClaimsSet.getStringListClaim("authorities");
+            } else {
+                return new UsernamePasswordAuthenticationToken(subject, null, Collections.emptyList());
+            }
         } catch (ParseException e) {
             throw new RuntimeException("Missing claims sub or authorities");
         }
         List<SimpleGrantedAuthority> grantedAuthorities = authorities.stream().map(SimpleGrantedAuthority::new).toList();
         return new UsernamePasswordAuthenticationToken(subject, null, grantedAuthorities);
-
     }
-
-
+    public String getEmailFromToken(String token) {
+        try {
+            SignedJWT signedJWT = SignedJWT.parse(token);
+            JWTClaimsSet jwtClaimsSet = signedJWT.getJWTClaimsSet();
+            return jwtClaimsSet.getSubject();
+        } catch (ParseException e){
+            throw new JwtAuthenticationException("Failed to get email from token");
+        }
+    }
 }
